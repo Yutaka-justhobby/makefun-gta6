@@ -446,7 +446,7 @@ export function createRenderer(canvas) {
     // toast
     if (state.msgT > 0 && state.msg) {
       ctx.globalAlpha = Math.min(1, state.msgT);
-      const w = 30 + state.msg.length * 10.5;
+      const w = 30 + state.msg.length * 13.5;
       panel(VIEW.width / 2 - w / 2, 86, w, 44);
       text(state.msg, VIEW.width / 2, 115, 19, PALETTE.text, 'center', true);
       ctx.globalAlpha = 1;
@@ -460,8 +460,19 @@ export function createRenderer(canvas) {
     }
     if (state.subT > 0 && state.sub) {
       ctx.globalAlpha = Math.min(1, state.subT / 1.5);
-      panel(VIEW.width / 2 - 430, VIEW.height - 168, 860, 56);
-      text(state.sub, VIEW.width / 2, VIEW.height - 133, 17.5, PALETTE.text, 'center', false);
+      // word-wrap the story line to at most two lines inside the panel
+      const words = state.sub.split(' ');
+      const lines = [''];
+      for (const w of words) {
+        const cur = lines[lines.length - 1];
+        if ((cur + ' ' + w).trim().length > 68 && lines.length < 2) lines.push(w);
+        else lines[lines.length - 1] = (cur + ' ' + w).trim();
+      }
+      const ph = 34 + lines.length * 24;
+      panel(VIEW.width / 2 - 450, VIEW.height - 104 - ph, 900, ph);
+      lines.forEach((ln, i) => {
+        text(ln, VIEW.width / 2, VIEW.height - 104 - ph + 36 + i * 24, 17.5, PALETTE.text, 'center', false);
+      });
       ctx.globalAlpha = 1;
     }
     // busted meter
