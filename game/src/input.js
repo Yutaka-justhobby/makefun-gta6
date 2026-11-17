@@ -1,49 +1,79 @@
-// Keyboard and pointer input. Held keys give a steering direction; one-shot presses (start or
-// restart, pause) are queued as bit flags and taken once by the loop, so a press between two
-// frames is never lost and never counted twice.
+// Keyboard and mouse input. Held keys give a movement vector; one-shot presses (confirm,
+// pause, interact) are queued as flags and taken once by the loop. The mouse position is kept
+// in canvas pixels so the game can aim from the screen centre (where the camera puts the player).
 
 export const ACTION_CONFIRM = 1;
 export const ACTION_PAUSE = 2;
+export const ACTION_INTERACT = 4;
+export const ACTION_NEWGAME = 8;
 
-const LEFT = new Set(['ArrowLeft', 'KeyA']);
-const RIGHT = new Set(['ArrowRight', 'KeyD']);
-const CONFIRM = new Set(['Space', 'Enter']);
-const PAUSE = new Set(['KeyP', 'Escape']);
+const KEYS = {
+  left: new Set(['ArrowLeft', 'KeyA']),
+  right: new Set(['ArrowRight', 'KeyD']),
+  up: new Set(['ArrowUp', 'KeyW']),
+  down: new Set(['ArrowDown', 'KeyS']),
+  run: new Set(['ShiftLeft', 'ShiftRight']),
+  brake: new Set(['Space']),
+  interact: new Set(['KeyE', 'KeyF']),
+  melee: new Set(['KeyJ', 'KeyQ']),
+  confirm: new Set(['Enter']),
+  pause: new Set(['KeyP', 'Escape']),
+  newgame: new Set(['KeyN']),
+};
 
 export function createInput(target) {
-  let left = false;
-  let right = false;
+  const held = { left: false, right: false, up: false, down: false, run: false, brake: false, melee: false };
   let actions = 0;
+  const mouse = { x: 0, y: 0, down: false };
+
+  function bucket(code) {
+    for (const name of Object.keys(KEYS)) if (KEYS[name].has(code)) return name;
+    return null;
+  }
 
   window.addEventListener('keydown', (event) => {
-    if (LEFT.has(event.code)) left = true;
-    else if (RIGHT.has(event.code)) right = true;
-    else if (CONFIRM.has(event.code)) {
-      if (!event.repeat) actions |= ACTION_CONFIRM;
-    } else if (PAUSE.has(event.code)) {
-      if (!event.repeat) actions |= ACTION_PAUSE;
-    } else return;
+    const name = bucket(event.code);
+    if (!name) return;
+    if (name === 'newgame') { if (!event.repeat) actions |= ACTION_NEWGAME; }
+    else if (name === 'confirm') { if (!event.repeat) actions |= ACTION_CONFIRM; }
+    else if (name === 'pause') { if (!event.repeat) actions |= ACTION_PAUSE; }
+    else if (name === 'interact') { if (!event.repeat) actions |= ACTION_INTERACT; }
+    else held[name] = true;
     event.preventDefault();
   });
   window.addEventListener('keyup', (event) => {
-    if (LEFT.has(event.code)) left = false;
-    else if (RIGHT.has(event.code)) right = false;
+    const name = bucket(event.code);
+    if (name && held[name] !== undefined) held[name] = false;
   });
-  // A key released while the tab is hidden never sends keyup: let go of everything on blur.
   window.addEventListener('blur', () => {
-    left = false;
-    right = false;
+    for (const k of Object.keys(held)) held[k] = false;
+    mouse.down = false;
   });
-  target.addEventListener('pointerdown', () => {
-    actions |= ACTION_CONFIRM;
+  target.addEventListener('pointermove', (event) => {
+    const rect = target.getBoundingClientRect();
+    mouse.x = event.clientX - rect.left;
+    mouse.y = event.clientY - rect.top;
   });
+  target.addEventListener('pointerdown', (event) => {
+    if (event.button === 0) { mouse.down = true; actions |= ACTION_CONFIRM; }
+  });
+  window.addEventListener('pointerup', (event) => {
+    if (event.button === 0) mouse.down = false;
+  });
+  target.addEventListener('contextmenu', (event) => event.preventDefault());
 
   return {
-    /** -1 for left, 1 for right, 0 for neither or both. */
-    direction() {
-      return (right ? 1 : 0) - (left ? 1 : 0);
+    /** Movement vector: mx is steer on foot/in car, my is forward(-1)/back(+1) screen-style. */
+    vector() {
+      return {
+        mx: (held.right ? 1 : 0) - (held.left ? 1 : 0),
+        my: (held.down ? 1 : 0) - (held.up ? 1 : 0),
+      };
     },
-    /** The one-shot presses since the last call, as ACTION_* flags. */
+    run() { return held.run; },
+    brake() { return held.brake; },
+    melee() { return held.melee || held.brake; },
+    mouse,
     takeActions() {
       const taken = actions;
       actions = 0;

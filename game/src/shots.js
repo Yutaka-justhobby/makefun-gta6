@@ -1,79 +1,77 @@
-// The screenshot scenes behind ?shot=start|play|end. Each one plays the real rules forward from a
-// fresh world for a fixed number of steps, steered by a simple autopilot (look ahead each way the
-// paddle could move, keep clear of blocks, chase the lowest coin when that is safe), so the frame
-// is what a short game really looks like and the same seed always gives the same frame.
-import { FIELD, PLAYER, STEP } from './config.js';
-import { EVENT_OVER, KIND_BLOCK } from './world.js';
-import { SCREEN_OVER, SCREEN_PLAY, SCREEN_TITLE } from './render.js';
+// Screenshot scenes behind ?shot=start|play|end. Each stages the real game state
+// deterministically from the seeded world, so the same seed always gives the same frame:
+// start = the title over a busy downtown junction, play = a three-star chase mid-mission,
+// end = the victory screen at the harbour hideout.
+import { STEP } from './config.js';
+import { POIS } from './world.js';
+import { SCREEN_OVER, SCREEN_PLAY, SCREEN_TITLE, SCREEN_WIN } from './render.js';
 
-const START_SECONDS = 5;
-const PLAY_SECONDS = 26;
-const END_LIMIT_SECONDS = 600;
-/**
- * How far ahead, in seconds, the autopilot checks each way it could move: the play scene's pilot
- * looks well ahead and keeps all its lives; the end scene's looks only a moment ahead, so it is
- * caught out once the blocks speed up, as a hurried player is.
- */
-const HORIZON_PLAY = 0.7;
-const HORIZON_END = 0.25;
-const SAMPLE = 1 / 30;
-const DIRECTIONS = [0, -1, 1];
-/** Extra room, each side, it keeps between the paddle and a block. */
-const MARGIN = 10;
+const IDLE = { mx: 0, my: 0, run: false, interact: false, melee: false, shoot: false, aim: 0, handbrake: false };
 
-/** Seconds until moving in `direction` (-1, 0, 1) runs the paddle into a block; Infinity when it never does. */
-function timeToHit(state, direction, horizon) {
-  const player = state.player;
-  for (let t = SAMPLE; t <= horizon; t += SAMPLE) {
-    const x = Math.min(FIELD.width - player.width, Math.max(0, player.x + direction * PLAYER.speed * t));
-    for (let index = 0; index < state.items.length; index += 1) {
-      const item = state.items[index];
-      if (!item.active || item.kind !== KIND_BLOCK) continue;
-      const y = item.y + item.speed * t;
-      if (y + item.height > player.y && y < player.y + player.height && item.x < x + player.width + MARGIN && item.x + item.width > x - MARGIN) return t;
-    }
-  }
-  return Infinity;
+function snapCamera(world, x, y) {
+  world.state.camera.x = x;
+  world.state.camera.y = y;
 }
 
-/** Of the safe ways to move, the one toward the lowest coin (or the centre); else the one that is hit last. */
-function autopilot(state, horizon) {
-  const player = state.player;
-  let coin = null;
-  for (let index = 0; index < state.items.length; index += 1) {
-    const item = state.items[index];
-    if (item.active && item.kind !== KIND_BLOCK && (coin === null || item.y > coin.y)) coin = item;
+function crowdAround(world, cx, cy) {
+  const s = world.state;
+  // extra pedestrians on the sidewalks near the camera
+  for (let i = 0; i < 10; i += 1) {
+    const a = (i / 10) * Math.PI * 2;
+    s.peds.push({
+      x: cx + Math.cos(a) * (120 + (i % 3) * 60), y: cy + Math.sin(a) * (120 + (i % 3) * 60),
+      angle: a + Math.PI / 2, speed: 50, color: ['#e74c3c', '#3498db', '#f1c40f', '#2ecc71', '#fd79a8'][i % 5],
+      skin: '#f2c79b', axis: 'x', laneC: cy, side: 1, s: 0, hp: 30, state: 'walk', fleeT: 0, downT: 0, phase: i * 1.3,
+    });
   }
-  const target = coin === null ? FIELD.width / 2 : coin.x + coin.width / 2;
-  const centre = player.x + player.width / 2;
-  const wanted = target > centre + 8 ? 1 : target < centre - 8 ? -1 : 0;
-  let best = wanted;
-  let bestTime = timeToHit(state, wanted, horizon);
-  for (let index = 0; index < DIRECTIONS.length && bestTime !== Infinity; index += 1) {
-    const time = timeToHit(state, DIRECTIONS[index], horizon);
-    if (time > bestTime) {
-      bestTime = time;
-      best = DIRECTIONS[index];
-    }
-  }
-  return best;
 }
 
-/**
- * Set `world` to the named scene (start, play or end; any other name is start) and return the
- * screen to draw over it and the best score to show.
- */
 export function stageShot(name, world) {
-  world.reset();
-  if (name !== 'play' && name !== 'end') {
-    for (let index = 0; index < START_SECONDS / STEP; index += 1) world.step(STEP, 0, true);
-    return { screen: SCREEN_TITLE, best: 0 };
+  const s = world.state;
+  world.newGame();
+
+  if (name === 'play') {
+    world.setMission(2); // PACKAGE RUN
+    s.bannerT = 0; s.subT = 5.5; s.money = 875;
+    s.player.hp = 82;
+    // put the player in the starter car at a central junction, rolling north
+    const car = s.cars.find((c) => c.driver === 'parked' && !c.target);
+    const px = 2025; const py = 1700;
+    if (car) {
+      car.x = px; car.y = py; car.angle = -Math.PI / 2; car.speed = 190; car.driver = 'player';
+      s.player.car = car;
+    }
+    s.player.x = px; s.player.y = py; s.player.angle = -Math.PI / 2;
+    snapCamera(world, px, py - 60);
+    // three stars and two cruisers on the tail
+    s.wantedPoints = 262; s.crimeT = 0;
+    world.spawnCopAt(px - 130, py + 250);
+    world.spawnCopAt(px + 150, py + 330);
+    crowdAround(world, px, py - 120);
+    for (let i = 0; i < 90; i += 1) world.step(STEP, { ...IDLE, my: -1 });
+    snapCamera(world, s.player.x, s.player.y);
+    return { screen: SCREEN_PLAY, hasSave: false };
   }
-  const limit = name === 'end' ? END_LIMIT_SECONDS : PLAY_SECONDS;
-  const horizon = name === 'end' ? HORIZON_END : HORIZON_PLAY;
-  for (let index = 0; index < limit / STEP; index += 1) {
-    if (world.step(STEP, autopilot(world.state, horizon), false) & EVENT_OVER) break;
+
+  if (name === 'end') {
+    s.money = 5860; s.carsStolen = 6; s.shotsFired = 47;
+    s.missionIndex = 4;
+    s.player.x = POIS.hideout.x + 60; s.player.y = POIS.hideout.y - 40;
+    snapCamera(world, s.player.x, s.player.y - 80);
+    crowdAround(world, s.player.x, s.player.y);
+    for (let i = 0; i < 120; i += 1) world.stepAmbient(STEP);
+    s.over = 'win';
+    return { screen: SCREEN_WIN, hasSave: false };
   }
-  const over = world.state.lives === 0;
-  return { screen: over ? SCREEN_OVER : SCREEN_PLAY, best: world.state.score };
+
+  // start: title over the Central Park junction, traffic flowing
+  s.player.x = 2025; s.player.y = 2090;
+  snapCamera(world, 2025, 1960);
+  crowdAround(world, 2025, 1960);
+  for (let i = 0; i < 240; i += 1) world.stepAmbient(STEP);
+  snapCamera(world, 2025, 1960);
+  s.bannerT = 0; s.subT = 0; s.msgT = 0;
+  return { screen: SCREEN_TITLE, hasSave: true };
 }
+
+export { SCREEN_OVER };
