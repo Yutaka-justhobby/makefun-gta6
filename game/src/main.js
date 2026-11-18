@@ -7,7 +7,8 @@
 import { SAVE_KEY, STEP, VIEW } from './config.js';
 import { createRandom } from './random.js';
 import { createWorld } from './world.js';
-import { ACTION_CONFIRM, ACTION_INTERACT, ACTION_NEWGAME, ACTION_PAUSE, createInput } from './input.js';
+import { ACTION_CONFIRM, ACTION_INTERACT, ACTION_MUTE, ACTION_NEWGAME, ACTION_PAUSE, createInput } from './input.js';
+import { createAudio } from './audio.js';
 import { createRenderer, SCREEN_OVER, SCREEN_PAUSED, SCREEN_PLAY, SCREEN_TITLE, SCREEN_WIN } from './render.js';
 import { stageShot } from './shots.js';
 
@@ -59,6 +60,10 @@ function runShot(name) {
 
 function runGame() {
   const input = createInput(canvas);
+  const audio = createAudio();
+  // the audio context may only start from a user gesture: unlock on any key or click
+  window.addEventListener('keydown', () => audio.unlock());
+  canvas.addEventListener('pointerdown', () => audio.unlock());
   let screen = SCREEN_TITLE;
   let save = readSave();
   let hasSave = !!(save && (save.missionIndex > 0 || save.money > 0));
@@ -77,6 +82,8 @@ function runGame() {
     world.newGame();
     screen = SCREEN_PLAY;
     overSince = -1;
+    syncWatch();
+    audio.click();
     announce('New game. Mission 1: reach Vince\'s garage.');
   }
 
@@ -84,6 +91,8 @@ function runGame() {
     world.loadProgress(save.missionIndex, save.money);
     screen = SCREEN_PLAY;
     overSince = -1;
+    syncWatch();
+    audio.click();
     announce(`Continuing at mission ${save.missionIndex + 1}.`);
   }
 
@@ -106,8 +115,45 @@ function runGame() {
     };
   }
 
+  // ---- sound: watch the world state each frame and play what changed ----
+  const prev = { shots: 0, meleeT: 0, car: null, shake: 0, packages: 0, mission: 0, stars: 0, over: null };
+  function syncWatch() {
+    const p = state.player;
+    prev.shots = state.shotsFired; prev.meleeT = p.meleeT; prev.car = p.car; prev.shake = state.shake;
+    prev.packages = state.packagesGot; prev.mission = state.missionIndex; prev.stars = state.stars; prev.over = state.over;
+  }
+  function watchAudio() {
+    const p = state.player;
+    if (state.shotsFired > prev.shots) audio.gunshot();
+    if (p.meleeT > prev.meleeT && p.meleeT > 0.3) audio.punch();
+    if (p.car !== prev.car) audio.door();
+    if (state.shake - prev.shake > 1.5) audio.thud((state.shake - prev.shake) / 6);
+    if (state.packagesGot > prev.packages) audio.pickup();
+    if (state.missionIndex > prev.mission) audio.jingle();
+    if (state.stars > prev.stars) audio.alert();
+    if (state.over !== prev.over && state.over) {
+      if (state.over === 'win') audio.jingle();
+      else audio.sting(state.over);
+    }
+    syncWatch();
+    // looping voices: engine follows your car, the siren follows the nearest cruiser
+    if (screen === SCREEN_PLAY && p.car && !state.over) {
+      audio.setEngine(true, Math.abs(p.car.speed) / 430);
+    } else audio.setEngine(false, 0);
+    let sirenLevel = 0;
+    if (screen === SCREEN_PLAY && state.stars > 0 && !state.over) {
+      let nearest = Infinity;
+      for (const c of state.cars) {
+        if (c.police && !c.dead) nearest = Math.min(nearest, Math.hypot(c.x - p.x, c.y - p.y));
+      }
+      if (nearest < 560) sirenLevel = 1 - nearest / 700;
+    }
+    audio.setSiren(sirenLevel);
+  }
+
   function handleActions() {
     const actions = input.takeActions();
+    if (actions & ACTION_MUTE) announce(audio.toggleMute() ? 'Sound off.' : 'Sound on.');
     if (screen === SCREEN_TITLE) {
       if (actions & ACTION_NEWGAME) startFresh();
       else if (actions & ACTION_CONFIRM) { if (hasSave) startContinue(); else startFresh(); }
@@ -115,8 +161,9 @@ function runGame() {
     }
     if (screen === SCREEN_OVER || screen === SCREEN_WIN) {
       if ((actions & ACTION_CONFIRM) && overSince > 0.6) {
+        audio.click();
         if (screen === SCREEN_WIN) startFresh();
-        else { world.retryMission(); screen = SCREEN_PLAY; overSince = -1; announce('Back on the street.'); }
+        else { world.retryMission(); screen = SCREEN_PLAY; overSince = -1; syncWatch(); announce('Back on the street.'); }
       }
       return 0;
     }
@@ -165,6 +212,7 @@ function runGame() {
         while (accumulator >= STEP) { world.stepAmbient(STEP); accumulator -= STEP; }
       } else accumulator = 0;
     }
+    watchAudio();
     renderer.draw(state, screen, { hasSave });
   }
 

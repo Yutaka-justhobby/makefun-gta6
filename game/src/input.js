@@ -6,6 +6,7 @@ export const ACTION_CONFIRM = 1;
 export const ACTION_PAUSE = 2;
 export const ACTION_INTERACT = 4;
 export const ACTION_NEWGAME = 8;
+export const ACTION_MUTE = 16;
 
 const KEYS = {
   left: new Set(['ArrowLeft', 'KeyA']),
@@ -19,6 +20,7 @@ const KEYS = {
   confirm: new Set(['Enter']),
   pause: new Set(['KeyP', 'Escape']),
   newgame: new Set(['KeyN']),
+  mute: new Set(['KeyM']),
 };
 
 export function createInput(target) {
@@ -35,6 +37,7 @@ export function createInput(target) {
     const name = bucket(event.code);
     if (!name) return;
     if (name === 'newgame') { if (!event.repeat) actions |= ACTION_NEWGAME; }
+    else if (name === 'mute') { if (!event.repeat) actions |= ACTION_MUTE; }
     else if (name === 'confirm') { if (!event.repeat) actions |= ACTION_CONFIRM; }
     else if (name === 'pause') { if (!event.repeat) actions |= ACTION_PAUSE; }
     else if (name === 'interact') { if (!event.repeat) actions |= ACTION_INTERACT; }
